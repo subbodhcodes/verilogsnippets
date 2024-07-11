@@ -1,3 +1,8 @@
+//This module helps in finding the number of 1s in a 4bit input and displays it. The size of the input and output can be changed as per requirement/
+
+
+
+
 module count_ones(a,b);
 input [3:0]a;
 output reg [3:0]b;
