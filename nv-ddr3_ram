@@ -1,0 +1,79 @@
+module nv_ddre(
+    input clk, rst,          // Clock and Reset
+    input [18:0] user_data,  // User data
+    input enable, rd_en, wr_en,
+    output reg [7:0] user_out // Output user data
+);
+
+// State definitions
+reg [1:0] state;
+parameter IDLE = 2'b00, READ = 2'b01, WRITE = 2'b10, REFRESH = 2'b11;
+
+// Memory array (4x4 bytes as defined earlier)
+reg [7:0] memory[3:0][3:0];
+
+// Row and Column address decoding
+wire [3:0] row_add = user_data[11:8];
+wire [3:0] col_add = user_data[15:12];
+wire rd = user_data[17];
+wire wr = user_data[16];
+
+// Read and Write Counters
+reg [7:0] read_counter;
+reg [7:0] write_counter;
+
+integer i, j;
+
+// Sequential Logic
+always @(posedge clk or posedge rst) begin
+    if (rst) begin
+        // Reset logic
+        for (i = 0; i < 4; i = i + 1) begin
+            for (j = 0; j < 4; j = j + 1) begin
+                memory[i][j] = 8'b0;
+            end
+        end
+        state <= IDLE;
+        user_out <= 8'b0;
+        read_counter <= 8'b0;
+        write_counter <= 8'b0;
+    end 
+    else if (enable) begin
+        case (state)
+            IDLE: begin
+                user_out <= 8'b0;
+                if (rd_en)
+                    state <= READ;
+                else if (wr_en)
+                    state <= WRITE;
+            end
+            
+            READ: begin
+                if (rd && read_counter < 16) begin
+                    user_out <= memory[row_add][col_add];
+                    read_counter <= read_counter + 1;
+                end else if (read_counter >= 16) begin
+                    state <= IDLE;  // Return to IDLE when memory is empty
+                end
+            end
+            
+            WRITE: begin
+                if (wr && write_counter < 16) begin
+                    memory[row_add][col_add] <= user_data[7:0];
+                    write_counter <= write_counter + 1;
+                end else if (write_counter >= 16) begin
+                    state <= IDLE;  // Return to IDLE when memory is full
+                end
+            end
+            
+            REFRESH: begin
+                // Optional: Implement specific refresh logic as required
+                state <= IDLE;
+            end
+            
+            default: state <= IDLE;
+        endcase
+    end
+end
+
+endmodule
