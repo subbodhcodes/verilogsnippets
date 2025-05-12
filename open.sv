@@ -527,3 +527,189 @@ module apb_slave_unit_test;
   end
 
 endmodule
+
+module apb_slave_unit_test;
+
+  logic [7:0] addr;
+  logic [31:0] data, rdata;
+
+  // DUT Signals
+  logic        clk;
+  logic        rst_n;
+  logic [7:0]  paddr;
+  logic        pwrite;
+  logic        psel;
+  logic        penable;
+  logic [31:0] pwdata;
+  logic [31:0] prdata;
+
+  // Instantiate DUT with named connections
+  apb_slave #(
+    .addrWidth(8),
+    .dataWidth(32)
+  ) my_apb_slave (
+    .clk     (clk),
+    .rst_n   (rst_n),
+    .paddr   (paddr),
+    .pwrite  (pwrite),
+    .psel    (psel),
+    .penable (penable),
+    .pwdata  (pwdata),
+    .prdata  (prdata)
+  );
+
+  // Clock generator
+  initial begin
+    clk = 0;
+    forever #5 clk = ~clk;
+  end
+
+  //===============================
+  // Test Control
+  //===============================
+  initial begin
+    reset_uut();
+
+    $display("Running: single_write_then_read");
+    single_write_then_read();
+
+    $display("Running: write_without_psel");
+    write_without_psel();
+
+    $display("Running: write_without_pwrite");
+    write_without_pwrite();
+
+    $display("Running: two_writes_then_reads");
+    two_writes_then_reads();
+
+    $display("All tests finished.");
+    $finish;
+  end
+
+  //===============================
+  // Reset & Idle
+  //===============================
+  task reset_uut();
+    idle();
+    rst_n = 0;
+    repeat (8) @(posedge clk);
+    rst_n = 1;
+    idle();
+  endtask
+
+  task idle();
+    @(negedge clk);
+    psel = 0;
+    penable = 0;
+    pwrite = 0;
+    paddr = 0;
+    pwdata = 0;
+  endtask
+
+  //===============================
+  // Testcases
+  //===============================
+  task single_write_then_read();
+    addr = 'h32;
+    data = 'h61;
+    write(addr, data);
+    read(addr, rdata);
+    assert(rdata === data) else $error("Test failed: single_write_then_read");
+  endtask
+
+  task write_without_psel();
+    addr = 'h0;
+    data = 'hffff_ffff;
+    write(addr, data);
+    write(addr, 'hff, 0, 0); // No psel
+    read(addr, rdata);
+    assert(rdata === data) else $error("Test failed: write_without_psel");
+  endtask
+
+  task write_without_pwrite();
+    addr = 'h10;
+    data = 'h99;
+    write(addr, data);
+    write(addr, 'hff, 0, 1, 0); // No pwrite
+    read(addr, rdata);
+    assert(rdata === data) else $error("Test failed: write_without_pwrite");
+  endtask
+
+  task two_writes_then_reads();
+    addr = 'hfe;
+    data = 'h31;
+    write(addr, data, 1);
+    write(addr + 1, data + 1, 1);
+    read(addr, rdata, 1);
+    assert(rdata === data) else $error("Test failed: two_writes_then_reads addr");
+    read(addr + 1, rdata, 1);
+    assert(rdata === data + 1) else $error("Test failed: two_writes_then_reads addr+1");
+  endtask
+
+  //===============================
+  // Read/Write Methods
+  //===============================
+  task write(
+    input logic [7:0] addr,
+    input logic [31:0] data,
+    input logic back2back = 0,
+    input logic setup_psel = 1,
+    input logic setup_pwrite = 1
+  );
+    if (!back2back) begin
+      @(negedge clk);
+      psel = 0;
+      penable = 0;
+    end
+
+    @(negedge clk);
+    psel = setup_psel;
+    pwrite = setup_pwrite;
+    paddr = addr;
+    pwdata = data;
+    penable = 0;
+
+    @(negedge clk);
+    pwrite = 1;
+    penable = 1;
+    psel = 1;
+  endtask
+
+  task read(
+    input logic [7:0] addr,
+    output logic [31:0] data,
+    input logic back2back = 0
+  );
+    if (!back2back) begin
+      @(negedge clk);
+      psel = 0;
+      penable = 0;
+    end
+
+    @(negedge clk);
+    psel = 1;
+    paddr = addr;
+    penable = 0;
+    pwrite = 0;
+
+    @(negedge clk);
+    penable = 1;
+
+    @(posedge clk);
+    #1 data = prdata;
+  endtask
+
+  //===============================
+  // Dump for Xcelium
+  //===============================
+  initial begin
+    `ifdef FSDB
+      $fsdbDumpfile("wave.fsdb");
+      $fsdbDumpvars(0, apb_slave_unit_test, "+mda");
+    `elsif SHM
+      $shm_open("wave.shm");
+      $shm_probe("AS", apb_slave_unit_test, "AS");
+    `endif
+  end
+
+endmodule
