@@ -323,17 +323,207 @@ always @(negedge rst_n or posedge clk) begin
       end
 
       R_ENABLE : begin
+
         // read prdata from memory
         if (psel && penable && !pwrite) begin
           prdata <= mem[paddr];
         end
 
         // return to SETUP
-        apb_st <= SETUP;
+        apb_st <= SETUP; 
       end
     endcase
   end
 end 
 
+
+endmodule
+
+`include "svunit_defines.svh"
+
+import svunit_pkg::*;
+
+module apb_slave_unit_test;
+
+  string name = "apb_slave_ut";
+  svunit_testcase svunit_ut;
+
+  logic [7:0] addr;
+  logic [31:0] data, rdata;
+
+  //===================================
+  // DUT signals
+  //===================================
+  logic        clk;
+  logic        rst_n;
+  logic [7:0]  paddr;
+  logic        pwrite;
+  logic        psel;
+  logic        penable;
+  logic [31:0] pwdata;
+  logic [31:0] prdata;
+
+  // Instantiate DUT with named connections (Cadence dislikes .*)
+  apb_slave #(
+    .addrWidth(8),
+    .dataWidth(32)
+  ) my_apb_slave (
+    .clk     (clk),
+    .rst_n   (rst_n),
+    .paddr   (paddr),
+    .pwrite  (pwrite),
+    .psel    (psel),
+    .penable (penable),
+    .pwdata  (pwdata),
+    .prdata  (prdata)
+  );
+
+  // Clock generator
+  initial begin
+    clk = 0;
+    forever #5 clk = ~clk;
+  end
+
+  //===================================
+  // Build
+  //===================================
+  function void build();
+    svunit_ut = new(name);
+  endfunction
+
+  //===================================
+  // Setup
+  //===================================
+  task setup();
+    svunit_ut.setup();
+    idle();
+    rst_n = 0;
+    repeat (8) @(posedge clk);
+    rst_n = 1;
+  endtask
+
+  //===================================
+  // Teardown
+  //===================================
+  task teardown();
+    svunit_ut.teardown();
+  endtask
+
+  //===================================
+  // Unit Tests
+  //===================================
+  `SVUNIT_TESTS_BEGIN
+
+  `SVTEST(single_write_then_read)
+    addr = 'h32;
+    data = 'h61;
+    write(addr, data);
+    read(addr, rdata);
+    `FAIL_IF(data !== rdata);
+  `SVTEST_END
+
+  `SVTEST(write_wo_psel)
+    addr = 'h0;
+    data = 'hffff_ffff;
+    write(addr, data);
+    write(addr, 'hff, 0, 0);
+    read(addr, rdata);
+    `FAIL_IF(data !== rdata);
+  `SVTEST_END
+
+  `SVTEST(write_wo_write)
+    addr = 'h10;
+    data = 'h99;
+    write(addr, data);
+    write(addr, 'hff, 0, 1, 0);
+    read(addr, rdata);
+    `FAIL_IF(data !== rdata);
+  `SVTEST_END
+
+  `SVTEST(_2_writes_then_2_reads)
+    addr = 'hfe;
+    data = 'h31;
+    write(addr, data, 1);
+    write(addr+1, data+1, 1);
+    read(addr, rdata, 1);
+    `FAIL_IF(data !== rdata);
+    read(addr+1, rdata, 1);
+    `FAIL_IF(data+1 !== rdata);
+  `SVTEST_END
+
+  `SVUNIT_TESTS_END
+
+  //===============================
+  // Utility Tasks
+  //===============================
+  task write(
+    input logic [7:0] addr,
+    input logic [31:0] data,
+    input logic back2back = 0,
+    input logic setup_psel = 1,
+    input logic setup_pwrite = 1
+  );
+    if (!back2back) begin
+      @(negedge clk);
+      psel = 0;
+      penable = 0;
+    end
+
+    @(negedge clk);
+    psel = setup_psel;
+    pwrite = setup_pwrite;
+    paddr = addr;
+    pwdata = data;
+    penable = 0;
+
+    @(negedge clk);
+    pwrite = 1;
+    penable = 1;
+    psel = 1;
+  endtask
+
+  task read(
+    input logic [7:0] addr,
+    output logic [31:0] data,
+    input logic back2back = 0
+  );
+    if (!back2back) begin
+      @(negedge clk);
+      psel = 0;
+      penable = 0;
+    end
+
+    @(negedge clk);
+    psel = 1;
+    paddr = addr;
+    penable = 0;
+    pwrite = 0;
+
+    @(negedge clk);
+    penable = 1;
+
+    @(posedge clk);
+    #1 data = prdata;
+  endtask
+
+  task idle();
+    @(negedge clk);
+    psel = 0;
+    penable = 0;
+    pwrite = 0;
+    paddr = 0;
+    pwdata = 0;
+  endtask
+
+  // Cadence-compatible waveform dumping
+  initial begin
+    `ifdef FSDB
+      $fsdbDumpfile("wave.fsdb");
+      $fsdbDumpvars(0, apb_slave_unit_test, "+mda");
+    `elsif SHM
+      $shm_open("wave.shm");
+      $shm_probe("AS", apb_slave_unit_test, "AS");
+    `endif
+  end
 
 endmodule
